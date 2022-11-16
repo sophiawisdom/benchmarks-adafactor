@@ -75,6 +75,29 @@ class GPTMLP(nn.Module):
     def forward(self, x):
         return self.mlp_down(self.mlp_act(self.mlp_up(x)))
 
+class GPTBlockRezero(nn.Module):
+    def __init__(self, cfg: Mapping[str, Any], device: str = None):
+        super().__init__()
+
+        self.rezero_alpha = nn.Parameter(torch.empty((1,), device=device))
+        if cfg.attn_impl == 'torch':
+            self.causal_attn = TorchCausalAttention(cfg, device)
+        elif cfg.attn_impl == 'flash':
+            self.causal_attn = FlashCausalAttention(cfg, device)
+        else:
+            raise ValueError(f'Unknown attn_impl={cfg.attn_impl}')
+        self.mlp = GPTMLP(cfg, device=device)
+        self.resid_attn_dropout = nn.Dropout(cfg.resid_pdrop)
+        self.resid_mlp_dropout = nn.Dropout(cfg.resid_pdrop)
+
+    def forward(self,
+                x: torch.Tensor,
+                key_padding_mask: torch.ByteTensor = None) -> torch.Tensor:
+        b, _ = self.causal_attn(a, key_padding_mask)
+        x = x + self.rezero_alpha.mul_(self.resid_attn_dropout(b))
+        n = self.mlp(m)
+        x = x + self.rezero_alpha.mul_(self.resid_mlp_dropout(n))
+        return x
 
 class GPTBlock(nn.Module):
     def __init__(self, cfg: Mapping[str, Any], device: str = None):
@@ -108,13 +131,16 @@ class MosaicGPT(nn.Module):
         super().__init__()
         assert cfg.name == 'mosaic_gpt', f'Tried to build MosaicGPT model with cfg.name={cfg.name}'
         self.cfg = cfg
+
+        block_cls = GPTBlockRezero if 'use_rezero' in cfg and cfg['use_rezero'] == True else GPTBlock
+
         self.transformer = nn.ModuleDict(
             dict(
                 wte=nn.Embedding(cfg.vocab_size, cfg.d_model, device=cfg.device),
                 wpe=nn.Embedding(cfg.max_seq_len, cfg.d_model, device=cfg.device),
                 emb_drop=nn.Dropout(cfg.emb_pdrop),
                 blocks=nn.ModuleList([
-                    GPTBlock(cfg, device=cfg.device) for _ in range(cfg.n_layers)
+                    block_cls(cfg, device=cfg.device) for _ in range(cfg.n_layers)
                 ]),
                 ln_f=nn.LayerNorm(cfg.d_model, device=cfg.device),
             ))
@@ -178,13 +204,18 @@ class MosaicGPT(nn.Module):
             torch.nn.init.zeros_(module.bias)
             torch.nn.init.ones_(module.weight)
 
+        # Hack for rezero
+        if isinstance(module, GPTBlockRezero):
+            print("Initing rezero")
+            torch.nn.init.zeros_(module.rezero_alpha)
+
     # FSDP Wrap function
     def fsdp_wrap_fn(self, module):
-        return isinstance(module, GPTBlock)
+        return isinstance(module, GPTBlock) or isinstance(module, GPTBlockRezero)
 
     # Activation Checkpointing
     def activation_checkpointing_fn(self, module):
-        return isinstance(module, GPTBlock)
+        return isinstance(module, GPTBlock) or isinstance(module, GPTBlockRezero)
 
 
 class ComposerMosaicGPT(ComposerModel):
@@ -226,3 +257,15 @@ class ComposerMosaicGPT(ComposerModel):
         outputs = outputs.view(-1, outputs.size(-1))
         targets = self.get_targets(batch).view(-1)
         metric.update(outputs, targets)
+
+
+if __name__ == '__main__':
+    from omegaconf import OmegaConf as om
+    import sys
+    yaml_path, args_list = sys.argv[1], sys.argv[2:]
+    with open(yaml_path) as f:
+        cfg = om.load(f)
+    print(cfg)
+    m = MosaicGPT(cfg.model)
+
+    print(m)
