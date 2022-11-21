@@ -29,7 +29,7 @@ train_loader:
   dataset:
     remote: *data_remote
     local: *data_local
-    split: train
+    split: val
     shuffle: true
     prefetch: 1_000_000
     tokenizer_name: *tokenizer_name
