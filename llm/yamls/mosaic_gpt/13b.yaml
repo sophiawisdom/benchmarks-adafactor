@@ -109,9 +109,9 @@ callbacks:
   # wandb: {}
 
 # Checkpoint to local filesystem or remote object store
-# save_interval: 5000ba
-# save_num_checkpoints_to_keep: 1  # Important, this cleans up checkpoints saved to DISK
-# save_folder: ./{run_name}/checkpoints
+save_interval: 1ba
+save_num_checkpoints_to_keep: 1  # Important, this cleans up checkpoints saved to DISK
+save_folder: /oci-test-storage/{run_name}
 # save_folder: s3://my-bucket/my-folder/{run_name}/checkpoints
 
 # Load from local filesystem or remote object store
