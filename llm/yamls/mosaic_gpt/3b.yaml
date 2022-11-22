@@ -123,4 +123,5 @@ callbacks:
 
 save_interval: 1ba
 save_num_checkpoints_to_keep: 1  # Important, this cleans up checkpoints saved to DISK
-save_folder: /oci-test-storage/{run_name}
+save_folder: gs://llm_models/mosaic_test/a{run_name}
+# save_folder: /oci-test-storage/a{run_name}
