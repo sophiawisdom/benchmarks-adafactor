@@ -45,7 +45,8 @@ class StreamingC4(Dataset):
                  group_method: str = 'truncate',
                  retry: int = 2,
                  timeout: float = 120,
-                 batch_size: Optional[int] = None):
+                 batch_size: Optional[int] = None,
+                 blacklists: list[tuple[int]] = []):
         # Validation
         if split not in ['train', 'val']:
             raise ValueError(f"split='{split}' must be one of ['train', 'val'].")
@@ -76,6 +77,8 @@ class StreamingC4(Dataset):
         # suppress warnings when using group_method='concat' and no truncation
         self.tokenizer.model_max_length = int(1e30)
 
+        self.blacklists = blacklists
+
     # How to tokenize a text sample to a token sample
     def _tokenize(self, text_sample):
         if self.group_method == 'truncate':
@@ -92,7 +95,9 @@ class StreamingC4(Dataset):
 
     # How to process a sample
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        text_sample = super().__getitem__(idx)
+        # blacklist is a list of ranges of indices that we don't train on, e.g. if blacklist was [(10, 20)] then self[0] -> 0, [1] -> 1,
+        # but [10] -> 20, [11] -> 21, etc.
+        text_sample = super().__getitem__(idx + sum(end-start for start, end in self.blacklists if idx >= start))
         token_sample = self._tokenize(text_sample)
         return token_sample
 
@@ -146,6 +151,7 @@ def build_c4_dataloader(cfg: Mapping[str, Any], device_batch_size: int):
                             tokenizer_name=cfg.dataset.tokenizer_name,
                             max_seq_len=cfg.dataset.max_seq_len,
                             group_method=cfg.dataset.group_method,
+                            blacklists=cfg.dataset.blacklists,
                             batch_size=device_batch_size)
 
     collate_fn = transformers.DataCollatorForLanguageModeling(
@@ -153,6 +159,7 @@ def build_c4_dataloader(cfg: Mapping[str, Any], device_batch_size: int):
 
     return DataLoader(
         dataset,
+        shuffle=False,
         collate_fn=collate_fn,
         batch_size=device_batch_size,
         drop_last=cfg.drop_last,
