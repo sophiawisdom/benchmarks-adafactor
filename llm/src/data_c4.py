@@ -78,6 +78,8 @@ class StreamingC4(StreamingDataset):
         # suppress warnings when using group_method='concat' and no truncation
         self.tokenizer.model_max_length = int(1e30)
 
+        self.blacklists = blacklists
+
     # How to tokenize a text sample to a token sample
     def _tokenize(self, text_sample):
         if self.group_method == 'truncate':
@@ -94,7 +96,9 @@ class StreamingC4(StreamingDataset):
 
     # How to process a sample
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        text_sample = super().__getitem__(idx)
+        # blacklist is a list of ranges of indices that we don't train on, e.g. if blacklist was [(10, 20)] then self[0] -> 0, [1] -> 1,
+        # but [10] -> 20, [11] -> 21, etc.
+        text_sample = super().__getitem__(idx + sum(end-start for start, end in self.blacklists if idx >= start))
         token_sample = self._tokenize(text_sample)
         return token_sample
 
@@ -156,6 +160,7 @@ def build_c4_dataloader(cfg: Mapping[str, Any], device_batch_size: int, shuffle_
 
     return DataLoader(
         dataset,
+        shuffle=False,
         collate_fn=collate_fn,
         batch_size=device_batch_size,
         drop_last=cfg.drop_last,

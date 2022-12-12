@@ -54,7 +54,7 @@ def build_callback(name, kwargs):
     elif name == "lm_eval_harness":
         return EvaluationCallback(every_n_batches=kwargs.get("every_n_batches", 32))
     elif name == "checkpoint_saver":
-        return CheckpointSaver(folder="sophia_model_experiments/{run_name}/checkpoints", save_interval="100ba")
+        return CheckpointSaver(folder="sophia_model_experiments/{run_name}-checkpoints", save_interval=kwargs.get("save_interval", "100ba"))
     else:
         raise ValueError(f'Not sure how to build callback: {name}')
 
