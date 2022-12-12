@@ -12,11 +12,11 @@ from typing import Any, Dict, Iterator, Mapping, Optional
 
 import transformers
 from omegaconf import OmegaConf as om
-from streaming import StreamingDataset
+from streaming import Dataset
 from torch.utils.data import DataLoader
 
 
-class StreamingC4(StreamingDataset):
+class StreamingC4(Dataset):
     """
     Implementation of the C4 (Colossal Cleaned Common Crawl) dataset using mosaicml-streaming's Dataset V2.
 
@@ -45,26 +45,24 @@ class StreamingC4(StreamingDataset):
                  group_method: str = 'truncate',
                  retry: int = 2,
                  timeout: float = 120,
-                 batch_size: Optional[int] = None,
-                 shuffle_seed: Optional[int] = None):
+                 batch_size: Optional[int] = None):
         # Validation
         if split not in ['train', 'val']:
             raise ValueError(f"split='{split}' must be one of ['train', 'val'].")
         if group_method not in ['truncate', 'concat']:
             raise ValueError(f"group_method='{group_method}' must be one of ['truncate', 'concat'].")
 
-        # Build StreamingDataset
+        # Build Dataset
         super().__init__(remote=remote,
                          local=local,
                          split=split,
                          shuffle=shuffle,
-                         predownload=prefetch,
+                         prefetch=prefetch,
                          keep_zip=False,
-                         download_retry=retry,
-                         download_timeout=timeout,
-                         validate_hash=None,
-                         batch_size=batch_size,
-                         shuffle_seed=shuffle_seed)
+                         retry=retry,
+                         timeout=timeout,
+                         hash=None,
+                         batch_size=batch_size)
         self.tokenizer_name = tokenizer_name
         self.max_seq_len = max_seq_len
         self.group_method = group_method
@@ -77,8 +75,6 @@ class StreamingC4(StreamingDataset):
             self.tokenizer.pad_token = self.tokenizer.eos_token
         # suppress warnings when using group_method='concat' and no truncation
         self.tokenizer.model_max_length = int(1e30)
-
-        self.blacklists = blacklists
 
     # How to tokenize a text sample to a token sample
     def _tokenize(self, text_sample):
@@ -96,9 +92,7 @@ class StreamingC4(StreamingDataset):
 
     # How to process a sample
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        # blacklist is a list of ranges of indices that we don't train on, e.g. if blacklist was [(10, 20)] then self[0] -> 0, [1] -> 1,
-        # but [10] -> 20, [11] -> 21, etc.
-        text_sample = super().__getitem__(idx + sum(end-start for start, end in self.blacklists if idx >= start))
+        text_sample = super().__getitem__(idx)
         token_sample = self._tokenize(text_sample)
         return token_sample
 
@@ -141,7 +135,7 @@ class StreamingC4(StreamingDataset):
             raise ValueError(f"Got unknown group_method='{self.group_method}'.")
 
 
-def build_c4_dataloader(cfg: Mapping[str, Any], device_batch_size: int, shuffle_seed: Optional[int]=None):
+def build_c4_dataloader(cfg: Mapping[str, Any], device_batch_size: int):
 
     assert cfg.name == 'c4', f'Tried to build c4 dataloader with cfg.name={cfg.name}'
     dataset = StreamingC4(split=cfg.dataset.split,
@@ -152,15 +146,13 @@ def build_c4_dataloader(cfg: Mapping[str, Any], device_batch_size: int, shuffle_
                             tokenizer_name=cfg.dataset.tokenizer_name,
                             max_seq_len=cfg.dataset.max_seq_len,
                             group_method=cfg.dataset.group_method,
-                            batch_size=device_batch_size,
-                            shuffle_seed=shuffle_seed)
+                            batch_size=device_batch_size)
 
     collate_fn = transformers.DataCollatorForLanguageModeling(
-        tokenizer=dataset.tokenizer, mlm=False)
+        tokenizer=dataset.tokenizer, mlm=True, mlm_probability=cfg.dataset.mlm_probability)
 
     return DataLoader(
         dataset,
-        shuffle=False,
         collate_fn=collate_fn,
         batch_size=device_batch_size,
         drop_last=cfg.drop_last,
@@ -189,9 +181,10 @@ if __name__ == '__main__':
             'split': 'val',
             'shuffle': True,
             'prefetch': 1000,
-            'tokenizer_name': 'gpt2',
+            'tokenizer_name': 'bert-base-uncased',
             'max_seq_len': 32,
-            'group_method': 'concat'
+            'group_method': 'truncate',
+            'mlm_probability': 0.15,
         },
         'drop_last': False,
         'num_workers': 4,
