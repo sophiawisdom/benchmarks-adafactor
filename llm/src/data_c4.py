@@ -94,6 +94,7 @@ class StreamingC4(StreamingDataset):
 
     # How to process a sample
     def __getitem__(self, idx: int) -> Dict[str, Any]:
+        text_sample = super().__getitem__(idx)
         token_sample = self._tokenize(text_sample)
         return token_sample
 
